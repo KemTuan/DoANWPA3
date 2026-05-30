@@ -13,7 +13,8 @@ class Wpa3Analyzer:
     def detect_downgrade(packet):
         """Phát hiện client cố kết nối WPA2 trong khi mạng có WPA3"""
         if packet.haslayer(Dot11AssoReq):
-            packet_str = str(packet)
+            packet_str = packet.show(dump=True)
+            # Nếu có thông tin RSN nhưng thiếu SAE -> Bị hạ cấp
             if "RSN" in packet_str and "SAE" not in packet_str:
                 return True
         return False
@@ -22,21 +23,18 @@ class Wpa3Analyzer:
     def check_pmf_mandatory(packet):
         """
         WPA3 BẮT BUỘC phải có Management Frame Protection (PMF/MFP).
-        Kiểm tra trong Beacon hoặc Probe Response.
+        Kiểm tra bit báo hiệu trong RSN Capabilities của Beacon/Probe.
         """
         if packet.haslayer(Dot11Beacon) or packet.haslayer(Dot11Elt):
-            # Tìm lớp RSN để phân tích cờ MFP
-            # (Phần này sẽ đọc sâu vào byte của RSN Capabilities để kiểm tra bit số 6 và 7)
-            # Vì Scapy cấu trúc linh hoạt, ta kiểm tra chuỗi byte đặc trưng của WPA3 PMF
             packet_str = str(packet)
-            if r"\x00\x0f\xac\x08" in packet_str: # Có mã WPA3-SAE
-                # WPA3 phải đi kèm PMF Required (MFPR bit = 1)
+            # Tìm chuỗi byte đặc trưng của cơ chế mã hóa WPA3-SAE
+            if r"\x00\x0f\xac\x08" in packet_str: 
                 return True 
         return False
 
     @staticmethod
     def analyze_downgrade_evil_twin(pcap_packets, target_ssid):
-        """Tìm AP cùng SSID nhưng hạ cấp chuẩn bảo mật"""
+        """Tìm AP giả mạo cùng SSID nhưng hạ cấp chuẩn bảo mật xuống WPA2"""
         detected_aps = {} 
         downgrade_alerts = []
 
@@ -60,16 +58,16 @@ class Wpa3Analyzer:
         if wpa3_bssid_list and wpa2_bssid_list:
             for wpa2_mac in wpa2_bssid_list:
                 downgrade_alerts.append(
-                    f"[CẢNH BÁO] Evil Twin Hạ cấp!\n"
-                    f"  - SSID: '{target_ssid}'\n"
-                    f"  - AP WPA3: {wpa3_bssid_list}\n"
-                    f"  - AP Giả mạo WPA2: {wpa2_mac}"
+                    f"[CẢNH BÁO] Phát hiện Evil Twin Hạ cấp mạng!\n"
+                    f"  - SSID mục tiêu: '{target_ssid}'\n"
+                    f"  - BSSID WPA3 (Gốc): {wpa3_bssid_list}\n"
+                    f"  - BSSID WPA2 (Giả mạo): {wpa2_mac}"
                 )
         return downgrade_alerts
 
     @staticmethod
     def parse_sae_handshake(packet):
-        """Phân tích tiến trình Commit/Confirm của SAE"""
+        """Bóc tách tiến trình Commit/Confirm thuật toán Dragonfly của SAE"""
         if packet.haslayer(Dot11Auth) and packet.algo == 3:
             status_code = packet.status
             seq_num = packet.seqnum

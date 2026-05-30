@@ -1,25 +1,14 @@
 version: '3.8'
-
 services:
-  # CONTAINER 1: Chuyên làm nhiệm vụ phòng thủ (Giám sát & Phân tích)
-  wpa3-monitor:
+  monitor:
     build: .
-    container_name: wpa3_defender
-    network_mode: "host"
-    privileged: true
     volumes:
       - ./data:/app/data
-    environment:
-      - INTERFACE=wlan0  # Card mạng dùng để nghe
-    command: python3 src/monitor.py
+    command: python3 -c "from monitor import run; run()" # Script giám sát theo thời gian thực
 
-  # CONTAINER 2: Chuyên làm nhiệm vụ tấn công (Kiểm thử)
-  wpa3-attacker:
-    build: .  # Dùng chung Image với container trên để tiết kiệm dung lượng
-    container_name: wpa3_attacker
-    network_mode: "host"
-    privileged: true
-    environment:
-      - INTERFACE=wlan1  
-    command: python3 src/simulator.py
-    profiles: [ "attack" ] 
+  attacker:
+    build: .
+    volumes:
+      - ./data:/app/data
+    # Attacker chỉ chạy kịch bản rồi thoát
+    command: python3 -c "from simulator import Wpa3AttackSimulator; s=Wpa3AttackSimulator('target_mac'); s.run_deauth_test()"

